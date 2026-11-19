@@ -1,0 +1,218 @@
+name: Codex Lite Packages
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: codex-lite-packages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: Package (${{ matrix.label }})
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    env:
+      GOPROXY: "https://proxy.golang.org|direct"
+      GOSUMDB: sum.golang.org
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macos-universal-dmg
+            runner: macos-latest
+            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
+            build_args: --target universal-apple-darwin --bundles dmg
+            bundle_dir: codex-account-manager-lite/src-tauri/target/universal-apple-darwin/release/bundle
+          - label: windows-x86_64-msi
+            runner: windows-latest
+            rust_targets: x86_64-pc-windows-msvc
+            build_args: --target x86_64-pc-windows-msvc --bundles msi
+            bundle_dir: codex-account-manager-lite/src-tauri/target/x86_64-pc-windows-msvc/release/bundle
+          - label: windows-x86_64-exe
+            runner: windows-latest
+            rust_targets: x86_64-pc-windows-msvc
+            build_args: --target x86_64-pc-windows-msvc --bundles nsis
+            bundle_dir: codex-account-manager-lite/src-tauri/target/x86_64-pc-windows-msvc/release/bundle
+          - label: linux-x86_64-deb-appimage-rpm
+            runner: ubuntu-22.04
+            rust_targets: x86_64-unknown-linux-gnu
+            build_args: --target x86_64-unknown-linux-gnu --bundles deb,appimage,rpm
+            bundle_dir: codex-account-manager-lite/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle
+          - label: linux-arm64-deb-appimage-rpm
+            runner: ubuntu-24.04-arm
+            rust_targets: aarch64-unknown-linux-gnu
+            build_args: --target aarch64-unknown-linux-gnu --bundles deb,appimage,rpm
+            bundle_dir: codex-account-manager-lite/src-tauri/target/aarch64-unknown-linux-gnu/release/bundle
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Unpack source archive
+        shell: bash
+        run: |
+          tar -xzf codex-account-manager-lite-source.tar.gz
+          find . -type f \( -name '._*' -o -name '.DS_Store' \) -delete
+
+      - name: Verify bundled source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -R "../../src-tauri/icons" codex-account-manager-lite/src-tauri/tauri.conf.json; then
+            echo "The uploaded codex-account-manager-lite-source.tar.gz is stale: icon paths still point outside the standalone app."
+            echo "Replace codex-account-manager-lite-source.tar.gz with the latest local archive, then start a new workflow run."
+            exit 1
+          fi
+          test -f codex-account-manager-lite/src-tauri/icons/32x32.png
+          test -f codex-account-manager-lite/src-tauri/icons/128x128.png
+          test -f codex-account-manager-lite/src-tauri/icons/128x128@2x.png
+          test -f codex-account-manager-lite/src-tauri/icons/icon.icns
+          test -f codex-account-manager-lite/src-tauri/icons/icon.ico
+          test -f codex-account-manager-lite/sidecars/cockpit-cliproxy/main.go
+          test -f codex-account-manager-lite/sidecars/cockpit-cliproxy/go.mod
+          test -f codex-account-manager-lite/sidecars/cockpit-cliproxy/go.sum
+          test -f codex-account-manager-lite/sidecars/cockpit-cliproxy/cdk/CLIProxyAPI/go.mod
+          test -f codex-account-manager-lite/sidecars/cockpit-cliproxy/cdk/CLIProxyAPI/go.sum
+          test -f codex-account-manager-lite/sidecars/cockpit-cliproxy/cdk/CLIProxyAPI/internal/registry/models/codex_client_models.json
+          test -f src/locales/ar.json
+          test -f src/locales/cs.json
+          test -f src/locales/de.json
+          test -f src/locales/en-US.json
+          test -f src/locales/en.json
+          test -f src/locales/es.json
+          test -f src/locales/fr.json
+          test -f src/locales/it.json
+          test -f src/locales/ja.json
+          test -f src/locales/ko.json
+          test -f src/locales/pl.json
+          test -f src/locales/pt-br.json
+          test -f src/locales/ru.json
+          test -f src/locales/tr.json
+          test -f src/locales/vi.json
+          test -f src/locales/zh-CN.json
+          test -f src/locales/zh-tw.json
+          if grep -R "../../sidecars/cockpit-cliproxy" crates/cockpit-core/src/modules/codex_protocol.rs; then
+            echo "The uploaded codex-account-manager-lite-source.tar.gz is stale: codex_protocol.rs still points at the original project sidecars directory."
+            echo "Replace codex-account-manager-lite-source.tar.gz with the latest local archive, then start a new workflow run."
+            exit 1
+          fi
+
+      - name: Install Linux system dependencies
+        if: startsWith(matrix.runner, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            file \
+            javascriptcoregtk-4.1 \
+            libayatana-appindicator3-dev \
+            libgtk-3-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libnm-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            patchelf \
+            pkg-config \
+            wget \
+            xdg-utils
+
+      - name: Rust setup
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+
+      - name: Go setup
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: |
+            codex-account-manager-lite/sidecars/cockpit-cliproxy/go.sum
+            codex-account-manager-lite/sidecars/cockpit-cliproxy/cdk/CLIProxyAPI/go.sum
+
+      - name: Verify Go toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          go_bin="$(command -v go)"
+          echo "GO=${go_bin}" >> "${GITHUB_ENV}"
+          echo "$(dirname "${go_bin}")" >> "${GITHUB_PATH}"
+          "${go_bin}" version
+          "${go_bin}" env GOOS GOARCH GOROOT GOPATH
+          command -v go
+          go version
+
+      - name: Download Go modules with retry
+        shell: bash
+        run: |
+          set -euo pipefail
+          module_dirs=(
+            "codex-account-manager-lite/sidecars/cockpit-cliproxy"
+            "codex-account-manager-lite/sidecars/cockpit-cliproxy/cdk/CLIProxyAPI"
+          )
+          proxy_candidates=(
+            "https://proxy.golang.org|direct"
+            "https://goproxy.io|direct"
+            "direct"
+          )
+          for proxy in "${proxy_candidates[@]}"; do
+            for attempt in 1 2 3; do
+              echo "Downloading Go modules via ${proxy} (attempt ${attempt}/3)"
+              succeeded=true
+              for module_dir in "${module_dirs[@]}"; do
+                if ! (cd "${module_dir}" && GOPROXY="${proxy}" go mod download all); then
+                  succeeded=false
+                  break
+                fi
+              done
+              if [[ "${succeeded}" == "true" ]]; then
+                echo "GOPROXY=${proxy}" >> "${GITHUB_ENV}"
+                exit 0
+              fi
+              sleep $((attempt * 10))
+            done
+          done
+          echo "Failed to download Go modules after all retries" >&2
+          exit 1
+
+      - name: Node.js setup
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: pnpm setup
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+
+      - name: Install frontend dependencies
+        working-directory: codex-account-manager-lite
+        run: pnpm install --frozen-lockfile --dangerously-allow-all-builds
+
+      - name: Build packages
+        working-directory: codex-account-manager-lite
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm exec tauri build --verbose --ci ${{ matrix.build_args }} 2>&1 | tee "../codex-lite-${{ matrix.label }}.log"
+          pnpm run collect:packages -- "${{ matrix.label }}"
+
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-lite-${{ matrix.label }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            ${{ matrix.bundle_dir }}/**/*.dmg
+            ${{ matrix.bundle_dir }}/**/*.msi
+            ${{ matrix.bundle_dir }}/**/*.exe
+            ${{ matrix.bundle_dir }}/**/*.deb
+            ${{ matrix.bundle_dir }}/**/*.AppImage
+            ${{ matrix.bundle_dir }}/**/*.rpm
+            codex-account-manager-lite/packages/${{ matrix.label }}/*
+            codex-lite-${{ matrix.label }}.log
